@@ -75,6 +75,70 @@ def isEmptyDatabaseActuallyWriteable(database: SqliteDatabase) -> bool:
         return False
 
 
+def _query_pragma(engine: sqlalchemy.engine.Engine, pragma: str) -> str:
+    """Return the current value of a SQLite PRAGMA as a lower-case string."""
+    with engine.connect() as conn:
+        result = conn.connection.cursor().execute(f"PRAGMA {pragma}").fetchone()
+        return str(result[0]).lower()
+
+
+class SqliteConnectionTuningTestCase(unittest.TestCase):
+    """Tests for the SQLite connection-tuning PRAGMAs added to makeEngine."""
+
+    def setUp(self):
+        self.root = makeTestTempDir(TESTDIR)
+
+    def tearDown(self):
+        removeTestTempDir(self.root)
+
+    def _make_file_engine(self, **kwargs) -> sqlalchemy.engine.Engine:
+        _, filename = tempfile.mkstemp(dir=self.root, suffix=".sqlite3")
+        engine = SqliteDatabase.makeEngine(filename=filename, **kwargs)
+        self.addCleanup(engine.dispose)
+        return engine
+
+    def testInMemoryNoPragmas(self):
+        """In-memory databases must NOT have the connect listener registered."""
+        engine = SqliteDatabase.makeEngine(filename=None)
+        self.addCleanup(engine.dispose)
+        # WAL is not applicable to :memory:; journal_mode stays 'memory'.
+        journal_mode = _query_pragma(engine, "journal_mode")
+        self.assertNotEqual(journal_mode, "wal")
+
+    def testFileDatabaseDefaultPragmas(self):
+        """File-based engines apply WAL, MEMORY temp_store, NORMAL sync."""
+        engine = self._make_file_engine()
+        self.assertEqual(_query_pragma(engine, "journal_mode"), "wal")
+        self.assertEqual(_query_pragma(engine, "temp_store"), "2")  # 2 = MEMORY
+        self.assertEqual(_query_pragma(engine, "synchronous"), "1")  # 1 = NORMAL
+
+    def testCacheSizeKib(self):
+        """cache_size_kib is forwarded as PRAGMA cache_size."""
+        engine = self._make_file_engine(cache_size_kib=-524288)
+        # SQLite stores the value as set (negative = KiB).
+        cache_size = int(_query_pragma(engine, "cache_size"))
+        self.assertEqual(cache_size, -524288)
+
+    def testMmapSizeBytes(self):
+        """mmap_size_bytes is forwarded as PRAGMA mmap_size."""
+        engine = self._make_file_engine(mmap_size_bytes=1073741824)
+        mmap_size = int(_query_pragma(engine, "mmap_size"))
+        self.assertGreaterEqual(mmap_size, 1073741824)
+
+    def testCacheSizeNoneDoesNotOverride(self):
+        """Omitting cache_size_kib leaves SQLite's default in place."""
+        engine = self._make_file_engine()
+        # SQLite default is a positive page count; we just verify it wasn't
+        # explicitly set to a large negative value.
+        cache_size = int(_query_pragma(engine, "cache_size"))
+        self.assertGreater(cache_size, -524288)
+
+    def testMmapSizeZeroDisabled(self):
+        """mmap_size_bytes=0 (the default) leaves mmap_size at 0."""
+        engine = self._make_file_engine(mmap_size_bytes=0)
+        self.assertEqual(int(_query_pragma(engine, "mmap_size")), 0)
+
+
 class SqliteFileDatabaseTestCase(unittest.TestCase, DatabaseTests):
     """Tests for `SqliteDatabase` using a standard file-based database."""
 
