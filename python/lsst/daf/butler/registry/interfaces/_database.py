@@ -331,6 +331,7 @@ class Database(ABC):
         namespace: str | None = None,
         writeable: bool = True,
         allow_temporary_tables: bool = True,
+        **_extra: Any,
     ) -> Database:
         """Construct a database from a SQLAlchemy URI.
 
