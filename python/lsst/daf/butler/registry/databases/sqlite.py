@@ -154,6 +154,8 @@ class SqliteDatabase(Database):
         *,
         filename: str | None = None,
         writeable: bool = True,
+        cache_size_kib: int | None = None,
+        mmap_size_bytes: int = 0,
     ) -> sqlalchemy.engine.Engine:
         """Create a `sqlalchemy.engine.Engine` from a SQLAlchemy URI or
         filename.
@@ -162,17 +164,36 @@ class SqliteDatabase(Database):
         ----------
         uri : `str` or `sqlalchemy.engine.URL`, optional
             A SQLAlchemy URI connection string.
-        filename : `str`
+        filename : `str`, optional
             Name of the SQLite database file, or `None` to use an in-memory
             database.  Ignored if ``uri is not None``.
         writeable : `bool`, optional
             If `True`, allow write operations on the database, including
             ``CREATE TABLE``.
+        cache_size_kib : `int`, optional
+            SQLite page cache size passed to ``PRAGMA cache_size``.  A negative
+            value is interpreted as KiB (e.g. ``-2097152`` = 2 GiB); a positive
+            value is a page count.  `None` leaves the SQLite default (~2 MiB)
+            unchanged.  Ignored for in-memory databases.
+        mmap_size_bytes : `int`, optional
+            Size in bytes for memory-mapped I/O (``PRAGMA mmap_size``).  Zero
+            (the default) disables mmap.  On Linux HPC systems, setting this to
+            the database file size or larger allows the OS page cache to serve
+            all reads with minimal disk I/O.  Ignored for in-memory databases.
 
         Returns
         -------
         engine : `sqlalchemy.engine.Engine`
             A database engine.
+
+        Notes
+        -----
+        For file-based databases, ``PRAGMA journal_mode = WAL``,
+        ``PRAGMA temp_store = MEMORY``, and ``PRAGMA synchronous = NORMAL``
+        are applied automatically to every new connection.  WAL mode is
+        persistent on the database file and will be visible to other tools
+        that open the same file; it creates ``-wal`` and ``-shm`` sidecar
+        files that are cleaned up automatically when the last connection closes.
         """
         # In order to be able to tell SQLite that we want a read-only or
         # read-write connection, we need to make the SQLite DBAPI connection
@@ -228,6 +249,34 @@ class SqliteDatabase(Database):
 
         sqlalchemy.event.listen(engine, "connect", _onSqlite3Connect)
 
+        if filename is not None:
+            # Apply performance PRAGMAs to every new file-based connection.
+            # Capture tuning values in the closure so the listener is
+            # self-contained.
+            _cache_size = cache_size_kib
+            _mmap_size = mmap_size_bytes
+
+            @sqlalchemy.event.listens_for(engine, "connect")
+            def _apply_pragmas(
+                dbapi_conn: Any,
+                _: Any,
+                cache_size: int | None = _cache_size,
+                mmap_size: int = _mmap_size,
+            ) -> None:
+                cursor = dbapi_conn.cursor()
+                # WAL: readers and writers don't block each other.
+                # Sticky on the file; intentional — see Notes in makeEngine.
+                cursor.execute("PRAGMA journal_mode = WAL")
+                # Temp tables and sort buffers in RAM, not on disk.
+                cursor.execute("PRAGMA temp_store = MEMORY")
+                # NORMAL is durable with WAL and faster than FULL.
+                cursor.execute("PRAGMA synchronous = NORMAL")
+                if cache_size is not None:
+                    cursor.execute(f"PRAGMA cache_size = {int(cache_size)}")
+                if mmap_size > 0:
+                    cursor.execute(f"PRAGMA mmap_size = {int(mmap_size)}")
+                cursor.close()
+
         def _onSqlite3Begin(connection: sqlalchemy.engine.Connection) -> sqlalchemy.engine.Connection:
             assert connection.dialect.name == "sqlite"
             # Replace pysqlite's buggy transaction handling that never BEGINs
@@ -254,6 +303,57 @@ class SqliteDatabase(Database):
         writeable: bool = True,
     ) -> Database:
         return cls(engine=engine, origin=origin, writeable=writeable, namespace=namespace)
+
+    @classmethod
+    def fromUri(
+        cls,
+        uri: str | sqlalchemy.engine.URL,
+        *,
+        origin: int,
+        namespace: str | None = None,
+        writeable: bool = True,
+        allow_temporary_tables: bool = True,
+        cache_size_kib: int | None = None,
+        mmap_size_bytes: int = 0,
+        **_extra: Any,
+    ) -> Database:
+        """Construct a database from a SQLAlchemy URI.
+
+        Parameters
+        ----------
+        uri : `str` or `sqlalchemy.engine.URL`
+            A SQLAlchemy URI connection string.
+        origin : `int`
+            An integer ID for autoincrement compound primary keys.
+        namespace : `str`, optional
+            A database namespace (schema) to associate with.
+        writeable : `bool`, optional
+            If `True`, allow write operations on the database.
+        allow_temporary_tables : `bool`, optional
+            If `True`, database operations may use temporary tables.
+        cache_size_kib : `int`, optional
+            Passed to `makeEngine` as ``cache_size_kib``.
+        mmap_size_bytes : `int`, optional
+            Passed to `makeEngine` as ``mmap_size_bytes``.
+
+        Returns
+        -------
+        db : `SqliteDatabase`
+            A new database instance.
+        """
+        db = cls.fromEngine(
+            cls.makeEngine(
+                uri,
+                writeable=writeable,
+                cache_size_kib=cache_size_kib,
+                mmap_size_bytes=mmap_size_bytes,
+            ),
+            origin=origin,
+            namespace=namespace,
+            writeable=writeable,
+        )
+        db._allow_temporary_tables = allow_temporary_tables
+        return db
 
     def isWriteable(self) -> bool:
         return self._writeable

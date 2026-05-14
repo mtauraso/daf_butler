@@ -181,6 +181,8 @@ class SqlRegistry:
             origin=config.get("origin", 0),
             namespace=config.get("namespace"),
             allow_temporary_tables=config.areTemporaryTablesAllowed,
+            cache_size_kib=config.get("cache_size_kib"),
+            mmap_size_bytes=config.get("mmap_size_bytes", 0),
         )
 
         try:
@@ -230,6 +232,8 @@ class SqlRegistry:
             namespace=config.get("namespace"),
             writeable=writeable,
             allow_temporary_tables=config.areTemporaryTablesAllowed,
+            cache_size_kib=config.get("cache_size_kib"),
+            mmap_size_bytes=config.get("mmap_size_bytes", 0),
         )
         try:
             managerTypes = RegistryManagerTypes.fromConfig(config)
