@@ -57,7 +57,8 @@ storageClasses:
       #
       # Defaults to ``PARENT``.  Ignored if ``bbox`` is not present.
       - origin
-
+    converters:
+      lsst.images.Image: lsst.images.Image.to_legacy
   ImageF:
     inheritsFrom: Image
     pytype: lsst.afw.image.ImageF
@@ -83,6 +84,8 @@ storageClasses:
       #
       # Defaults to ``PARENT``.  Ignored if ``bbox`` is not present.
       - origin
+    converters:
+      lsst.images.Mask: lsst.images.Mask.to_legacy
   MaskX:
     inheritsFrom: Mask
     pytype: lsst.afw.image.MaskX
@@ -101,6 +104,8 @@ storageClasses:
       image: Image
       mask: Mask
       variance: Image
+    converters:
+      lsst.images.MaskedImage: lsst.images.MaskedImage.to_legacy
   MaskedImageF:
     inheritsFrom: MaskedImage
     pytype: lsst.afw.image.MaskedImageF
@@ -306,6 +311,11 @@ storageClasses:
       # with the on-disk image.
       - detector
 
+      # Whether to store the quantized pixels when decompressing so they can
+      # be written back out directly when written again.  This is only
+      # available when doing a storage class conversion to VisitImage on read.
+      - preserve_quantization
+
     components:
       image: Image
       mask: Mask
@@ -327,6 +337,8 @@ storageClasses:
       bbox: Box2I
       dimensions: Extent2I
       xy0: Point2I
+    converters:
+      lsst.images.VisitImage: lsst.images.VisitImage.to_legacy
   ExposureF:
     inheritsFrom: Exposure
     pytype: lsst.afw.image.ExposureF
@@ -479,7 +491,6 @@ storageClasses:
     derivedComponents:
       projection: Projection
       bbox: BoxV2
-      obs_info: ObservationInfo
     converters:
       lsst.afw.image.Image: lsst.images.Image.from_legacy
   MaskV2:
@@ -489,7 +500,6 @@ storageClasses:
     derivedComponents:
       projection: Projection
       bbox: BoxV2
-      obs_info: ObservationInfo
     converters:
       lsst.afw.image.Mask: lsst.images.Mask.from_legacy
   MaskedImageV2:
@@ -502,7 +512,6 @@ storageClasses:
       image: ImageV2
       mask: MaskV2
       variance: ImageV2
-      obs_info: ObservationInfo
     converters:
       lsst.afw.image.MaskedImage: lsst.images.MaskedImage.from_legacy
   PointSpreadFunction:
@@ -524,9 +533,12 @@ storageClasses:
     pytype: lsst.images.VisitImage
     derivedComponents:
       psf: PointSpreadFunction
+      obs_info: ObservationInfo
       summary_stats: ObservationSummaryStats
       aperture_corrections: StructuredDataDict
       detector: DetectorV2
+      photometric_scaling: ImageField
+      backgrounds: BackgroundMap
     converters:
       lsst.afw.image.Exposure: lsst.images.VisitImage.from_legacy
   ColorImage:
@@ -537,8 +549,16 @@ storageClasses:
       projection: Projection
   ObservationSummaryStats:
     pytype: lsst.images.ObservationSummaryStats
+  ImageField:
+    pytype: lsst.images.fields.BaseField
+  BackgroundMap:
+    pytype: lsst.images.BackgroundMap
   ExtendedPsfCandidates:
     pytype: lsst.pipe.tasks.extended_psf.ExtendedPsfCandidates
+    parameters:
+      - bbox
+  ExtendedPsfImage:
+    pytype: lsst.pipe.tasks.extended_psf.ExtendedPsfImage
     parameters:
       - bbox
   CellCoaddProvenance:
@@ -549,6 +569,7 @@ storageClasses:
     derivedComponents:
       psf: PointSpreadFunction
       provenance: CellCoaddProvenance
+      backgrounds: BackgroundMap
     converters:
       # This converter function doesn't actually work, because it takes an
       # extra argument.  But we need to declare it anyway to give the
