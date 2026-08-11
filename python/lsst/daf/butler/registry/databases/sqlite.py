@@ -264,13 +264,10 @@ class SqliteDatabase(Database):
                 mmap_size: int = _mmap_size,
             ) -> None:
                 cursor = dbapi_conn.cursor()
-                # WAL: readers and writers don't block each other.
-                # Sticky on the file; intentional — see Notes in makeEngine.
-                cursor.execute("PRAGMA journal_mode = WAL")
-                # Temp tables and sort buffers in RAM, not on disk.
+                if writeable:
+                    cursor.execute("PRAGMA journal_mode = WAL")
+                    cursor.execute("PRAGMA synchronous = NORMAL")
                 cursor.execute("PRAGMA temp_store = MEMORY")
-                # NORMAL is durable with WAL and faster than FULL.
-                cursor.execute("PRAGMA synchronous = NORMAL")
                 if cache_size is not None:
                     cursor.execute(f"PRAGMA cache_size = {int(cache_size)}")
                 if mmap_size > 0:
